@@ -1,119 +1,119 @@
 import numpy as np
-from scipy.optimize import root_scalar, root
-from scipy.special import lambertw
-from scipy.interpolate import interp1d
+import netCDF4 as nc4
+import net_radiation
+import atmospheric_parameters
+import wind_shear_velocity
 
 # Using TerraClimate
+# 2.5 arcminute (1/24 degree) resolution: ~5 km N-S
 
-solar_constant = 1360.8 # W/m^2
-stefan_boltzmann_constant = 5.67E-8
-von_karman_constant = 0.407
-wind_measurement_elevation = 2. # m
+# Import step
+# ... load files here or with a CLI
+years = range(1958, 2019)
+months_zero_indexed = range(12)
+TerraClimateDir = '/media/andy/data1/TerraClimate/'
 
-
-def _computeClearSkySolarRadiation(elevation, julian_day, latitude):
-
-    # Step 1: top-of-atmosphere ("extraterrestrial") radiation
-    # Change 365 to number of days in year?
-    inverse_relative_earth_sun_distance = 1 + 0.033 * np.cos(2*np.pi/365. * julian_day )
-    solar_declination = 0.409 * np.sin( 2*np.pi/365. * julian_day - 1.39 )
-    
-    sunset_hour_angle = np.arccos( -np.tan(np.pi/180. * latitude) 
-                                   * np.tan(solar_declination) )
-    
-    extraterrestrial_radiation = solar_constant * inverse_relative_earth_sun_distance \
-                                 * ( sunset_hour_angle
-                                     * np.sin(np.pi/180. * latitude)
-                                     * np.sin(solar_declination)
-                                     + np.cos(np.pi/180. * latitude)
-                                     * np.cos(solar_declination)
-                                     * np.sin(sunset_hour_angle) )
-
-    clear_sky_solar_radiation = (0.75 + 2E-5 * elevation) * extraterrestrial_radiation
-    return clear_sky_solar_radiation
-
-def computeNetLongwaveRadiation(elevation, julian_day, latitude,
-                                Tmax_degC, Tmin_degC, vapor_pressure,
-                                incoming_solar_radiation,
-                                clear_sky_solar_radiation):
-    """
-    Following Zotarelli et al., 2010
-    If this is for the land surface, it may need some modification to be
-    appropriate for lakes and their heating/cooling
-    """
-    Rnl = stefan_boltzmann_constant \
-              * ( (Tmax_degC + 273.16)**4 + (Tmin_degC + 273.16)**4 ) / 2. \
-              * (.34 - .14 * vapor_pressure**.5) \
-              * (1.35*incoming_solar_radiation/clear_sky_solar_radiation - 0.35)
-    return Rnl
-    
-def computeNetShortwaveRadiation(incoming_solar_radiation, albedo):
-    return incoming_solar_radiation * (1-albedo)
-
-
-
-# Hersbach 2011
-
-def ustar_fcn(ustar, v):
-    if ustar != 0:
-        kappa = .407
-        g = 9.805
-        z = 2.
-        ac = 1.8E-2
-        am = 0.11
-        nu_air = 1.5E-5
-        z0_viscous_term = am * nu_air / ustar
-        z0_charnock_turbulent_term = ac * ustar**2 / g
-        z0 = z0_viscous_term + z0_charnock_turbulent_term
-        # return v * kappa / np.log( g * z / (ac * ustar**2) ) - ustar
-        return v * kappa / np.log( z / z0 ) - ustar
+def extract_data(varnc, varname, varmonth_zero_indexed=None):
+    if varmonth_zero_indexed is None:
+        var = varnc.variables[varname][:]
     else:
-        return np.inf
-    
+        var = varnc.variables[varname][varmonth_zero_indexed]
+    fv = var.fill_value
+    var = var.data
+    var[var == fv] = np.nan
+    return var
 
-def create_shear_velocity_lookup_table(v_array = np.arange(0, 55, 0.1)):
-    ustar_array = []
-    for v in v_array:
-        rf = root_scalar(ustar_fcn, args=(v), x0=.5, x1=10.)
-        ustar_array.append(rf.root)
-    ustar_array = np.array(ustar_array)
-    v_array = np.array(v_array)
-    ustar_array[v_array == 0] = 1E-12 # safe tiny number
-    return v_array, ustar_array
+# Get lats and lons from one file
+srad_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_srad_1958.nc')
+lats = extract_data(srad_nc, 'lat')
+lons = extract_data(srad_nc, 'lon')
+LONS, LATS = np.meshgrid (lons, lats)
 
-wind_velocities, shear_velocities = create_shear_velocity_lookup_table()
-shear_velocities[0] = 0 # fix from root finder
+# Shear velocity of winds: tool to compute from velocity
+ustar_interp = wind_shear_velocity.create_lookup_table_one_step()
 
-def compute_z0_from_ustar(wind_velocities, shear_velocities):
-        kappa = .407
-        z = 2.
-        return z / np.exp( kappa * wind_velocities / shear_velocities )
+# Elevation
+elevation_nc = nc4.Dataset(TerraClimateDir+'Gebco_2020_2_point_5_arcminute.nc')
+elevation = extract_data(elevation_nc, 'value')
+elevation = elevation[::-1]
 
-z0 = compute_z0_from_ustar(wind_velocities, shear_velocities)
-plt.plot(wind_velocities, shear_velocities)
+# Heat capacity of air
+specific_heat_capacity_of_air = 1.005 # approx. constant at 1 atm
+                                      # Humidity minor impact below 40C or so
+                                      # But this is an approximation!
+cp = specific_heat_capacity_of_air # Easier
 
+# Water density
+rho_w = 1000.
 
-# SEEMS TO ONLY WORK FOR A SMALL RANGE OF VALUES, AND NOT WELL AT THAT.
-# QUITE CONFUSED.
-def solve_shear_velocity_analytical(v_array = np.arange(0, 50, 0.1)):
-    ustar_array = []
-    for v in v_array:
-        ustar_array.append( -0.2035*v / lambertw(-0.01372 * np.abs(v)) )
-    ustar_array = np.array(ustar_array)
-    return v_array, ustar_array
+# Latent heat of vaporization for water
+Lv = 2.5E6
+DeltaH_vap = Lv # to make me happier
 
-wind_velocities_analytical, shear_velocities_analytical = solve_shear_velocity_analytical()
+# Ratio of molecular weight of water vapor to dry air
+epsilon = 0.622
 
+# Days in month, for weighting
+days_in_month = [31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
-ustar_interp = interp1d(wind_velocities, shear_velocities)
+# Evaporation array
+E = np.zeros(elevation.shape)
 
+for year in years[:1]:
+    print(year)
+    # Incoming solar radiation (monthly average)
+    srad_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_srad_'+str(year)+'.nc')
+    # Maximum daily temperature (monthly average)
+    tmax_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_tmax_'+str(year)+'.nc')
+    # Minimum daily temperature (monthly average)
+    tmin_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_tmin_'+str(year)+'.nc')
+    # Wind speed (monthly average)
+    ws_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_ws_'+str(year)+'.nc')
+    # Vapor pressure (monthly average)
+    vap_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_vap_'+str(year)+'.nc')
 
-#plt.plot(wind_velocities_analytical, shear_velocities_analytical)
+    # Now compute for each month
+    for month in months_zero_indexed:
+        print(month+1)
+        # Data
+        srad = extract_data(srad_nc, 'srad', month)
+        tmax = extract_data(tmax_nc, 'tmax', month)
+        tmin = extract_data(tmin_nc, 'tmin', month)
+        ws = extract_data(ws_nc, 'ws', month)
+        vap = extract_data(vap_nc, 'vap', month) * 1000. # kPa to Pa
+        julian_day = np.sum(days_in_month[:month]) + days_in_month[month]/2.
+        #elevation = 2000. # placeholder
+        #julian_day = 205 # placeholder
+        #vap = .03*101325 # placeholder
+        albedo = 0.06
 
+        # Calculations:
+        # Net Radiation
+        Rn = net_radiation.computeNetRadiation(elevation, julian_day, LATS,
+                                                tmax, tmin, vap, srad, albedo)
 
-def compute_shear_velocity(wind_speed):
-    return ustar_interp(wind_speed)
-    
+        # Shear velocity of winds
+        ustar = ustar_interp(ws)
 
+        # Vapor-pressure deficit
+        # We don't have max and min humidity
+        VPD = atmospheric_parameters.compute_vpd( (tmax+tmin)/2., vap )
 
+        # Atmospheric pressure
+        P = atmospheric_parameters.compute_atmospheric_pressure(elevation)
 
+        # Atmospheric density (ignoring temperature + humidity effects)
+        rho_a = atmospheric_parameters.compute_atmospheric_density(elevation,
+                                        (tmax + tmin)/2.)
+
+        # Clausius-Clayperon phase-change slope
+        Delta = ( atmospheric_parameters.compute_Delta_e_sat( tmax )
+                  + atmospheric_parameters.compute_Delta_e_sat( tmin ) ) / 2.
+
+        _E = (Rn + cp*rho_a*ustar**2/(Delta*ws) * VPD) \
+             / ( rho_w*Lv  + P*cp*rho_w/epsilon )
+        _E[_E<0] = 0 # ignore condensation; I think it's spurious (Antarctica?)
+        E += _E*days_in_month[month]
+
+# REMEMBER TO UPDATE FOR FULL TIME SERIES
+E /= (365.25*len(years[:1]))
