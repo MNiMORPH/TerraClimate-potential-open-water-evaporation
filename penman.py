@@ -3,6 +3,7 @@ import netCDF4 as nc4
 import net_radiation
 import atmospheric_parameters
 import wind_shear_velocity
+import datetime
 
 # Using TerraClimate
 # 2.5 arcminute (1/24 degree) resolution: ~5 km N-S
@@ -27,7 +28,7 @@ def extract_data(varnc, varname, varmonth_zero_indexed=None):
 srad_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_srad_1958.nc')
 lats = extract_data(srad_nc, 'lat')
 lons = extract_data(srad_nc, 'lon')
-LONS, LATS = np.meshgrid (lons, lats)
+#LONS, LATS = np.meshgrid (lons, lats)
 
 # Shear velocity of winds: tool to compute from velocity
 ustar_interp = wind_shear_velocity.create_lookup_table_one_step()
@@ -59,7 +60,8 @@ days_in_month = [31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 # Evaporation array
 E = np.zeros(elevation.shape)
 
-for year in years[:1]:
+years = years[:13] # 1970 and before: before so much GW
+for year in years:
     print(year)
     # Incoming solar radiation (monthly average)
     srad_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_srad_'+str(year)+'.nc')
@@ -73,15 +75,16 @@ for year in years[:1]:
     vap_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_vap_'+str(year)+'.nc')
 
     # Now compute for each month
-    for month in months_zero_indexed:
-        print(month+1)
+    for month_zi in months_zero_indexed:
+        print(month_zi+1)
         # Data
-        srad = extract_data(srad_nc, 'srad', month)
-        tmax = extract_data(tmax_nc, 'tmax', month)
-        tmin = extract_data(tmin_nc, 'tmin', month)
-        ws = extract_data(ws_nc, 'ws', month)
-        vap = extract_data(vap_nc, 'vap', month) * 1000. # kPa to Pa
-        julian_day = np.sum(days_in_month[:month]) + days_in_month[month]/2.
+        srad = extract_data(srad_nc, 'srad', month_zi)
+        tmax = extract_data(tmax_nc, 'tmax', month_zi)
+        tmin = extract_data(tmin_nc, 'tmin', month_zi)
+        ws = extract_data(ws_nc, 'ws', month_zi)
+        vap = extract_data(vap_nc, 'vap', month_zi) * 1000. # kPa to Pa
+        # Average radiation on the midday of the month; could be more precise
+        date = datetime.date(year, month_zi+1, int(np.round(days_in_month[month_zi]/2.)))
         #elevation = 2000. # placeholder
         #julian_day = 205 # placeholder
         #vap = .03*101325 # placeholder
@@ -89,7 +92,7 @@ for year in years[:1]:
 
         # Calculations:
         # Net Radiation
-        Rn = net_radiation.computeNetRadiation(elevation, julian_day, LATS,
+        Rn = net_radiation.computeNetRadiation(elevation, date, lats, len(lons),
                                                 tmax, tmin, vap, srad, albedo)
 
         # Shear velocity of winds
@@ -113,7 +116,6 @@ for year in years[:1]:
         _E = (Rn + cp*rho_a*ustar**2/(Delta*ws) * VPD) \
              / ( rho_w*Lv  + P*cp*rho_w/epsilon )
         _E[_E<0] = 0 # ignore condensation; I think it's spurious (Antarctica?)
-        E += _E*days_in_month[month]
+        E += _E*days_in_month[month_zi]
 
-# REMEMBER TO UPDATE FOR FULL TIME SERIES
-E /= (365.25*len(years[:1]))
+E /= (365.25*len(years))
