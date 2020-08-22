@@ -119,3 +119,40 @@ for year in years:
         E += _E*days_in_month[month_zi]
 
 E /= (365.25*len(years))
+
+
+# Export
+from netCDF4 import Dataset
+import numpy
+import time
+
+#path to the file you want to open or create
+location_string="evaporation_002p5_arcmin.nc"
+
+# Create nc file
+rootgrp = Dataset(location_string,"w",format="NETCDF4")
+
+# Dimensions
+lat=rootgrp.createDimension("lat", len(lats))
+lon=rootgrp.createDimension("lon", len(lons))
+value = rootgrp.createDimension("evaporation", None)
+
+# Values
+latitudes = rootgrp.createVariable("lat", "f4", ("lat",))
+longitudes = rootgrp.createVariable("lon", "f4", ("lon",))
+values = rootgrp.createVariable("value", "f4" , ("lat", "lon",))
+latitudes[:] = lats
+longitudes[:] = lons
+values[:] = E
+
+# Units
+latitudes.units = "degrees north"
+longitudes.units = "degrees east"
+values.units = "metres per second"
+
+# Metadata
+rootgrp.description = "Evaporation derived from TerraClimate data products (see https://github.com/umn-earth-surface/TerraClimate-potential-open-water-evaporation)."
+rootgrp.history = "created" + time.ctime(time.time())
+values.Long_Name = "Open-water evaporation"
+
+# Save
