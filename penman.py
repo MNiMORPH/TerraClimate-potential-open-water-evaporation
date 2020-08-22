@@ -156,3 +156,4 @@ rootgrp.history = "created" + time.ctime(time.time())
 values.Long_Name = "Open-water evaporation"
 
 # Save
+rootgrp.close()
