@@ -4,7 +4,7 @@ import numpy as np
 Lv = 2.5E6
 # Specific gas constant of water vapor
 Rv = 461. # J / (kg K)
-
+Rspec = 287.05  # for air
 
 # VAPOR PRESSURE
 
@@ -35,7 +35,7 @@ def compute_vpd(Tair_degC, e_a):
 def compute_Delta_e_sat(Tair_degC):
     # d(e_sat)/dT
     return 2508300 / (Tair_degC + 237.3)**2 \
-            * np.exp(17.3*Tair_degC / (Tair_degC + 273.3 ))
+            * np.exp(17.3*Tair_degC / (Tair_degC + 237.3 ))
 
 
 # AIR PRESSURE AND DENSITY
@@ -46,4 +46,4 @@ def compute_atmospheric_pressure(elevation):
 
 def compute_atmospheric_density(elevation, Tair_degC):
     P =  compute_atmospheric_pressure(elevation)
-    return P / (Rv * (Tair_degC + 273.15) )
+    return P / (Rspec * (Tair_degC + 273.15) )

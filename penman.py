@@ -25,7 +25,7 @@ def extract_data(varnc, varname, varmonth_zero_indexed=None):
     return var
 
 # Get lats and lons from one file
-srad_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_srad_1958.nc')
+srad_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_srad_1958.nc')     
 lats = extract_data(srad_nc, 'lat')
 lons = extract_data(srad_nc, 'lon')
 #LONS, LATS = np.meshgrid (lons, lats)
@@ -38,17 +38,18 @@ elevation_nc = nc4.Dataset(TerraClimateDir+'Gebco_2020_2_point_5_arcminute.nc')
 elevation = extract_data(elevation_nc, 'value')
 elevation = elevation[::-1]
 
-# Heat capacity of air
-specific_heat_capacity_of_air = 1.005 # approx. constant at 1 atm
+# Heat capacity of air in J / (kg K)
+specific_heat_capacity_of_air = 1005 # approx. constant at 1 atm
                                       # Humidity minor impact below 40C or so
                                       # But this is an approximation!
+                                      # unit is J/(kg*K)
 cp = specific_heat_capacity_of_air # Easier
 
 # Water density
-rho_w = 1000.
+rho_w = 1000.                         # kg/m^3
 
 # Latent heat of vaporization for water
-Lv = 2.5E6
+Lv = 2.5E6                            # J/kg
 DeltaH_vap = Lv # to make me happier
 
 # Ratio of molecular weight of water vapor to dry air
@@ -64,15 +65,15 @@ years = years[:13] # 1970 and before: before so much GW
 for year in years:
     print(year)
     # Incoming solar radiation (monthly average)
-    srad_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_srad_'+str(year)+'.nc')
+    srad_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_srad_'+str(year)+'.nc')     # unit is J/(s*m^2)
     # Maximum daily temperature (monthly average)
-    tmax_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_tmax_'+str(year)+'.nc')
+    tmax_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_tmax_'+str(year)+'.nc')     # deg C at 2m
     # Minimum daily temperature (monthly average)
     tmin_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_tmin_'+str(year)+'.nc')
     # Wind speed (monthly average)
-    ws_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_ws_'+str(year)+'.nc')
+    ws_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_ws_'+str(year)+'.nc')         # m/s
     # Vapor pressure (monthly average)
-    vap_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_vap_'+str(year)+'.nc')
+    vap_nc = nc4.Dataset(TerraClimateDir+'TerraClimate_vap_'+str(year)+'.nc')        # kPa (at least in the 2026 version of TerraClimate)
 
     # Now compute for each month
     for month_zi in months_zero_indexed:
@@ -92,33 +93,35 @@ for year in years:
 
         # Calculations:
         # Net Radiation
-        Rn = net_radiation.computeNetRadiation(elevation, date, lats, len(lons),
-                                                tmax, tmin, vap, srad, albedo)
+        Rn = net_radiation.computeNetRadiation(elevation, date, lats, lons,
+                                                tmax, tmin, vap, srad, albedo)         # W/m^2         
 
         # Shear velocity of winds
-        ustar = ustar_interp(ws)
+        ustar = ustar_interp(ws)                                                        # m /s 
 
         # Vapor-pressure deficit
         # We don't have max and min humidity
-        VPD = atmospheric_parameters.compute_vpd( (tmax+tmin)/2., vap )
+        VPD = atmospheric_parameters.compute_vpd( (tmax+tmin)/2., vap )                 
+        VPD = VPD * 1000                                                                # kPa to Pa
 
         # Atmospheric pressure
         P = atmospheric_parameters.compute_atmospheric_pressure(elevation)
 
         # Atmospheric density (ignoring temperature + humidity effects)
         rho_a = atmospheric_parameters.compute_atmospheric_density(elevation,
-                                        (tmax + tmin)/2.)
+                                        (tmax + tmin)/2.)                                # kg/m^3
 
         # Clausius-Clayperon phase-change slope
         Delta = ( atmospheric_parameters.compute_Delta_e_sat( tmax )
-                  + atmospheric_parameters.compute_Delta_e_sat( tmin ) ) / 2.
+                  + atmospheric_parameters.compute_Delta_e_sat( tmin ) ) / 2.            # Pa/degC
 
         _E = (Rn + cp*rho_a*ustar**2/(Delta*ws) * VPD) \
-             / ( rho_w*Lv  + P*cp*rho_w/epsilon )
+             / ( rho_w*Lv  + P*cp*rho_w/(epsilon*Delta) )                                # m / s
         _E[_E<0] = 0 # ignore condensation; I think it's spurious (Antarctica?)
-        E += _E*days_in_month[month_zi]
+        unitConv = 86400                                                                 # to go from m/s to m/d
+        E += _E*days_in_month[month_zi]*unitConv
 
-E /= (365.25*len(years))
+E /= len(years)        # divide by number of years so you get average evaporation per year (m/yr)
 
 
 # Export

@@ -7,7 +7,7 @@ stefan_boltzmann_constant = 5.67E-8
 von_karman_constant = 0.407
 wind_measurement_elevation = 2. # m
 
-def _computeClearSkySolarRadiation(elevation, date, latitude, nlons):
+def _computeClearSkySolarRadiation(elevation, date, latitude, lons):
 
     # Step 1: top-of-atmosphere ("extraterrestrial") radiation
     # Numerically integrate with dt = 1 minute
@@ -20,13 +20,14 @@ def _computeClearSkySolarRadiation(elevation, date, latitude, nlons):
     while _datetime.date() == date:
         extraterrestrial_radiation += \
                         sunpos.extraterrestrial_solar_radiation(
-                            _datetime, latitude, np.zeros(latitude.shape)
+                            _datetime, latitude, lons)
                             )
         _datetime += _timedelta
     extraterrestrial_radiation /= (24.*60.)
 
     # Same values across latitudes
-    extraterrestrial_radiation = np.tile( np.expand_dims(extraterrestrial_radiation, 2), nlons)
+    # note from Uma: I was not getting the same values across longitudes, I may have done something wrong
+    # extraterrestrial_radiation = np.tile( np.expand_dims(extraterrestrial_radiation, 2), nlons)
 
     # Clear sky input a f(elevation)
     clear_sky_solar_radiation = (0.75 + 2E-5 * elevation) * extraterrestrial_radiation
@@ -63,10 +64,10 @@ def computeNetLongwaveRadiation(elevation,
 def computeNetShortwaveRadiation(incoming_solar_radiation, albedo):
     return incoming_solar_radiation * (1-albedo)
 
-def computeNetRadiation(elevation, date, latitude, nlons,
+def computeNetRadiation(elevation, date, latitude, lons,
                                 Tmax_degC, Tmin_degC, vapor_pressure,
                                 incoming_solar_radiation, albedo):
-    cs = _computeClearSkySolarRadiation(elevation, date, latitude, nlons)
+    cs = _computeClearSkySolarRadiation(elevation, date, latitude, lons)
     lw = computeNetLongwaveRadiation(elevation,
                                 Tmax_degC, Tmin_degC, vapor_pressure,
                                 incoming_solar_radiation, cs)
